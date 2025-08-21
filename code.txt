@@ -1,0 +1,583 @@
+"""
+CSV to Excel Manager Module
+Author: Assistant
+Description: Comprehensive module for handling CSV to Excel operations with advanced features
+"""
+
+import pandas as pd
+import openpyxl
+from openpyxl.utils import get_column_letter
+from openpyxl.utils.dataframe import dataframe_to_rows
+import os
+from typing import List, Optional, Union, Tuple, Any
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+class ExcelCSVManager:
+    """
+    A comprehensive manager class for handling CSV to Excel operations
+    """
+    
+    def __init__(self, excel_file_path: str):
+        """
+        Initialize the Excel CSV Manager
+        
+        Args:
+            excel_file_path (str): Path to the Excel file
+        """
+        self.excel_file_path = excel_file_path
+        self.workbook = None
+        self._load_workbook()
+    
+    def _load_workbook(self):
+        """Load the Excel workbook"""
+        try:
+            if os.path.exists(self.excel_file_path):
+                self.workbook = openpyxl.load_workbook(self.excel_file_path)
+                logger.info(f"Loaded existing workbook: {self.excel_file_path}")
+            else:
+                self.workbook = openpyxl.Workbook()
+                logger.info(f"Created new workbook: {self.excel_file_path}")
+        except Exception as e:
+            logger.error(f"Error loading workbook: {e}")
+            raise
+    
+    def csv_to_excel(self, 
+                     csv_file_path: str, 
+                     sheet_name: str,
+                     start_row: int = 1, 
+                     start_col: int = 1,
+                     row_order: Optional[List[int]] = None,
+                     include_header: bool = True,
+                     clear_existing: bool = True) -> bool:
+        """
+        Insert CSV data into Excel sheet with flexible positioning and row ordering
+        
+        Args:
+            csv_file_path (str): Path to the CSV file
+            sheet_name (str): Name of the Excel sheet
+            start_row (int): Starting row position (1-indexed)
+            start_col (int): Starting column position (1-indexed)
+            row_order (List[int], optional): List of row indices to specify custom order
+            include_header (bool): Whether to include CSV header
+            clear_existing (bool): Whether to clear existing data in the range
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Read CSV file
+            df = pd.read_csv(csv_file_path)
+            logger.info(f"Read CSV file: {csv_file_path} with {len(df)} rows")
+            
+            # Reorder rows if specified
+            if row_order:
+                # Validate row indices
+                max_index = len(df) - 1
+                invalid_indices = [i for i in row_order if i < 0 or i > max_index]
+                if invalid_indices:
+                    logger.warning(f"Invalid row indices found: {invalid_indices}")
+                    # Filter out invalid indices
+                    row_order = [i for i in row_order if 0 <= i <= max_index]
+                
+                if row_order:
+                    df = df.iloc[row_order].reset_index(drop=True)
+                    logger.info(f"Reordered data according to specified indices")
+            
+            # Get or create worksheet
+            if sheet_name in self.workbook.sheetnames:
+                worksheet = self.workbook[sheet_name]
+            else:
+                worksheet = self.workbook.create_sheet(title=sheet_name)
+                logger.info(f"Created new sheet: {sheet_name}")
+            
+            # Clear existing data if requested
+            if clear_existing:
+                self._clear_range(worksheet, start_row, start_col, 
+                                len(df) + (1 if include_header else 0), len(df.columns))
+            
+            # Insert data
+            current_row = start_row
+            
+            # Insert header if requested
+            if include_header:
+                for col_idx, header in enumerate(df.columns):
+                    worksheet.cell(row=current_row, 
+                                 column=start_col + col_idx, 
+                                 value=header)
+                current_row += 1
+            
+            # Insert data rows
+            for row_idx, row in df.iterrows():
+                for col_idx, value in enumerate(row):
+                    worksheet.cell(row=current_row, 
+                                 column=start_col + col_idx, 
+                                 value=value)
+                current_row += 1
+            
+            logger.info(f"Successfully inserted data into {sheet_name} at position ({start_row}, {start_col})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error inserting CSV data: {e}")
+            return False
+    
+    def copy_row_between_sheets(self, 
+                               source_sheet: str, 
+                               target_sheet: str,
+                               source_row: int, 
+                               target_row: int,
+                               source_start_col: int = 1,
+                               source_end_col: Optional[int] = None,
+                               target_start_col: int = 1) -> bool:
+        """
+        Copy a row from one sheet to another at specified position
+        
+        Args:
+            source_sheet (str): Name of source sheet
+            target_sheet (str): Name of target sheet
+            source_row (int): Row number in source sheet (1-indexed)
+            target_row (int): Row number in target sheet (1-indexed)
+            source_start_col (int): Starting column in source sheet
+            source_end_col (int, optional): Ending column in source sheet
+            target_start_col (int): Starting column in target sheet
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Get source worksheet
+            if source_sheet not in self.workbook.sheetnames:
+                logger.error(f"Source sheet '{source_sheet}' not found")
+                return False
+            source_ws = self.workbook[source_sheet]
+            
+            # Get or create target worksheet
+            if target_sheet in self.workbook.sheetnames:
+                target_ws = self.workbook[target_sheet]
+            else:
+                target_ws = self.workbook.create_sheet(title=target_sheet)
+                logger.info(f"Created new target sheet: {target_sheet}")
+            
+            # Determine end column if not specified
+            if source_end_col is None:
+                source_end_col = source_ws.max_column
+            
+            # Copy row data
+            col_offset = 0
+            for col in range(source_start_col, source_end_col + 1):
+                source_cell = source_ws.cell(row=source_row, column=col)
+                target_cell = target_ws.cell(row=target_row, column=target_start_col + col_offset)
+                
+                # Copy value
+                target_cell.value = source_cell.value
+                
+                # Copy formatting (optional - can be extensive)
+                if source_cell.has_style:
+                    target_cell.font = source_cell.font.copy()
+                    target_cell.border = source_cell.border.copy()
+                    target_cell.fill = source_cell.fill.copy()
+                    target_cell.number_format = source_cell.number_format
+                    target_cell.alignment = source_cell.alignment.copy()
+                
+                col_offset += 1
+            
+            logger.info(f"Copied row {source_row} from '{source_sheet}' to row {target_row} in '{target_sheet}'")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error copying row: {e}")
+            return False
+    
+    def copy_table_between_sheets(self,
+                                 source_sheet: str,
+                                 target_sheet: str,
+                                 source_start_row: int,
+                                 source_start_col: int,
+                                 source_end_row: int,
+                                 source_end_col: int,
+                                 target_start_row: int,
+                                 target_start_col: int,
+                                 copy_formatting: bool = True,
+                                 clear_target_area: bool = False) -> bool:
+        """
+        Copy a table (rectangular range) from one sheet to another at specified position
+        
+        Args:
+            source_sheet (str): Name of source sheet
+            target_sheet (str): Name of target sheet
+            source_start_row (int): Starting row of source table (1-indexed)
+            source_start_col (int): Starting column of source table (1-indexed)
+            source_end_row (int): Ending row of source table (1-indexed)
+            source_end_col (int): Ending column of source table (1-indexed)
+            target_start_row (int): Starting row in target sheet (1-indexed)
+            target_start_col (int): Starting column in target sheet (1-indexed)
+            copy_formatting (bool): Whether to copy cell formatting
+            clear_target_area (bool): Whether to clear target area before copying
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Validate coordinates
+            if (source_start_row > source_end_row or 
+                source_start_col > source_end_col or
+                source_start_row < 1 or source_start_col < 1 or
+                target_start_row < 1 or target_start_col < 1):
+                logger.error("Invalid coordinates provided")
+                return False
+            
+            # Get source worksheet
+            if source_sheet not in self.workbook.sheetnames:
+                logger.error(f"Source sheet '{source_sheet}' not found")
+                return False
+            source_ws = self.workbook[source_sheet]
+            
+            # Get or create target worksheet
+            if target_sheet in self.workbook.sheetnames:
+                target_ws = self.workbook[target_sheet]
+            else:
+                target_ws = self.workbook.create_sheet(title=target_sheet)
+                logger.info(f"Created new target sheet: {target_sheet}")
+            
+            # Calculate table dimensions
+            num_rows = source_end_row - source_start_row + 1
+            num_cols = source_end_col - source_start_col + 1
+            
+            # Clear target area if requested
+            if clear_target_area:
+                self._clear_range(target_ws, target_start_row, target_start_col, 
+                                num_rows, num_cols)
+            
+            # Copy table data
+            for row_offset in range(num_rows):
+                for col_offset in range(num_cols):
+                    source_row = source_start_row + row_offset
+                    source_col = source_start_col + col_offset
+                    target_row = target_start_row + row_offset
+                    target_col = target_start_col + col_offset
+                    
+                    source_cell = source_ws.cell(row=source_row, column=source_col)
+                    target_cell = target_ws.cell(row=target_row, column=target_col)
+                    
+                    # Copy value
+                    target_cell.value = source_cell.value
+                    
+                    # Copy formatting if requested
+                    if copy_formatting and source_cell.has_style:
+                        target_cell.font = source_cell.font.copy()
+                        target_cell.border = source_cell.border.copy()
+                        target_cell.fill = source_cell.fill.copy()
+                        target_cell.number_format = source_cell.number_format
+                        target_cell.alignment = source_cell.alignment.copy()
+            
+            logger.info(f"Copied table ({source_start_row},{source_start_col}) to "
+                       f"({source_end_row},{source_end_col}) from '{source_sheet}' "
+                       f"to ({target_start_row},{target_start_col}) in '{target_sheet}'")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error copying table: {e}")
+            return False
+    
+    def copy_table_by_range(self,
+                           source_sheet: str,
+                           target_sheet: str,
+                           source_range: str,
+                           target_start_cell: str,
+                           copy_formatting: bool = True,
+                           clear_target_area: bool = False) -> bool:
+        """
+        Copy a table using Excel-style range notation (e.g., "A1:D10")
+        
+        Args:
+            source_sheet (str): Name of source sheet
+            target_sheet (str): Name of target sheet
+            source_range (str): Source range in Excel notation (e.g., "A1:D10")
+            target_start_cell (str): Target starting cell in Excel notation (e.g., "B5")
+            copy_formatting (bool): Whether to copy cell formatting
+            clear_target_area (bool): Whether to clear target area before copying
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            from openpyxl.utils import range_boundaries
+            
+            # Parse source range
+            min_col, min_row, max_col, max_row = range_boundaries(source_range)
+            
+            # Parse target start cell
+            target_ws_temp = openpyxl.Workbook().active
+            target_cell_obj = target_ws_temp[target_start_cell]
+            target_start_row = target_cell_obj.row
+            target_start_col = target_cell_obj.column
+            
+            # Use the coordinate-based function
+            return self.copy_table_between_sheets(
+                source_sheet=source_sheet,
+                target_sheet=target_sheet,
+                source_start_row=min_row,
+                source_start_col=min_col,
+                source_end_row=max_row,
+                source_end_col=max_col,
+                target_start_row=target_start_row,
+                target_start_col=target_start_col,
+                copy_formatting=copy_formatting,
+                clear_target_area=clear_target_area
+            )
+            
+        except Exception as e:
+            logger.error(f"Error copying table by range: {e}")
+            return False
+    
+    def refresh_and_save(self, force_calculation: bool = True) -> bool:
+        """
+        Refresh formulas and save the workbook
+        
+        Args:
+            force_calculation (bool): Force recalculation of all formulas
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Force calculation if requested
+            if force_calculation:
+                for sheet_name in self.workbook.sheetnames:
+                    worksheet = self.workbook[sheet_name]
+                    # Force recalculation by setting calculation properties
+                    worksheet.sheet_properties.enableFormatConditionsCalculation = True
+                    worksheet.sheet_properties.filterMode = False
+            
+            # Save the workbook
+            self.workbook.save(self.excel_file_path)
+            logger.info(f"Workbook saved successfully: {self.excel_file_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving workbook: {e}")
+            return False
+    
+    def _clear_range(self, worksheet, start_row: int, start_col: int, 
+                    num_rows: int, num_cols: int):
+        """
+        Clear a range of cells in the worksheet
+        
+        Args:
+            worksheet: Openpyxl worksheet object
+            start_row (int): Starting row
+            start_col (int): Starting column
+            num_rows (int): Number of rows to clear
+            num_cols (int): Number of columns to clear
+        """
+        for row in range(start_row, start_row + num_rows):
+            for col in range(start_col, start_col + num_cols):
+                worksheet.cell(row=row, column=col).value = None
+    
+    def get_sheet_names(self) -> List[str]:
+        """Get list of all sheet names in the workbook"""
+        return list(self.workbook.sheetnames)
+    
+    def create_sheet(self, sheet_name: str) -> bool:
+        """
+        Create a new sheet in the workbook
+        
+        Args:
+            sheet_name (str): Name of the new sheet
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if sheet_name not in self.workbook.sheetnames:
+                self.workbook.create_sheet(title=sheet_name)
+                logger.info(f"Created new sheet: {sheet_name}")
+                return True
+            else:
+                logger.warning(f"Sheet '{sheet_name}' already exists")
+                return False
+        except Exception as e:
+            logger.error(f"Error creating sheet: {e}")
+            return False
+    
+    def delete_sheet(self, sheet_name: str) -> bool:
+        """
+        Delete a sheet from the workbook
+        
+        Args:
+            sheet_name (str): Name of the sheet to delete
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if sheet_name in self.workbook.sheetnames:
+                del self.workbook[sheet_name]
+                logger.info(f"Deleted sheet: {sheet_name}")
+                return True
+            else:
+                logger.warning(f"Sheet '{sheet_name}' not found")
+                return False
+        except Exception as e:
+            logger.error(f"Error deleting sheet: {e}")
+            return False
+    
+    def get_sheet_data(self, sheet_name: str, 
+                      start_row: int = 1, start_col: int = 1,
+                      end_row: Optional[int] = None, 
+                      end_col: Optional[int] = None) -> Optional[List[List[Any]]]:
+        """
+        Get data from a sheet as a list of lists
+        
+        Args:
+            sheet_name (str): Name of the sheet
+            start_row (int): Starting row
+            start_col (int): Starting column
+            end_row (int, optional): Ending row
+            end_col (int, optional): Ending column
+            
+        Returns:
+            List[List[Any]] or None: Sheet data or None if error
+        """
+        try:
+            if sheet_name not in self.workbook.sheetnames:
+                logger.error(f"Sheet '{sheet_name}' not found")
+                return None
+            
+            worksheet = self.workbook[sheet_name]
+            
+            if end_row is None:
+                end_row = worksheet.max_row
+            if end_col is None:
+                end_col = worksheet.max_column
+            
+            data = []
+            for row in range(start_row, end_row + 1):
+                row_data = []
+                for col in range(start_col, end_col + 1):
+                    cell_value = worksheet.cell(row=row, column=col).value
+                    row_data.append(cell_value)
+                data.append(row_data)
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error getting sheet data: {e}")
+            return None
+    
+    def close(self):
+        """Close the workbook"""
+        if self.workbook:
+            self.workbook.close()
+            logger.info("Workbook closed")
+
+
+# Standalone utility functions
+def batch_csv_to_excel(csv_files: List[str], 
+                      excel_file: str,
+                      sheet_mappings: List[dict]) -> bool:
+    """
+    Batch process multiple CSV files to Excel
+    
+    Args:
+        csv_files (List[str]): List of CSV file paths
+        excel_file (str): Excel file path
+        sheet_mappings (List[dict]): List of dictionaries with mapping configuration
+                                   Each dict should contain:
+                                   - 'csv_file': CSV file path
+                                   - 'sheet_name': Target sheet name
+                                   - 'start_row': Starting row (optional, default 1)
+                                   - 'start_col': Starting column (optional, default 1)
+                                   - 'row_order': Custom row order (optional)
+                                   - 'include_header': Include header (optional, default True)
+    
+    Returns:
+        bool: True if all operations successful
+    """
+    try:
+        manager = ExcelCSVManager(excel_file)
+        
+        for mapping in sheet_mappings:
+            csv_file = mapping['csv_file']
+            if csv_file not in csv_files:
+                logger.warning(f"CSV file {csv_file} not found in provided list")
+                continue
+            
+            success = manager.csv_to_excel(
+                csv_file_path=csv_file,
+                sheet_name=mapping['sheet_name'],
+                start_row=mapping.get('start_row', 1),
+                start_col=mapping.get('start_col', 1),
+                row_order=mapping.get('row_order'),
+                include_header=mapping.get('include_header', True)
+            )
+            
+            if not success:
+                logger.error(f"Failed to process {csv_file}")
+                return False
+        
+        # Save all changes
+        manager.refresh_and_save()
+        manager.close()
+        
+        logger.info("Batch processing completed successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error in batch processing: {e}")
+        return False
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Example usage
+    excel_file = "output.xlsx"
+    
+    # Initialize manager
+    manager = ExcelCSVManager(excel_file)
+    
+    # Example 1: Basic CSV to Excel
+    # manager.csv_to_excel("data.csv", "Sheet1", start_row=2, start_col=1)
+    
+    # Example 2: CSV to Excel with custom row order
+    # custom_order = [2, 0, 1, 3]  # Reorder rows
+    # manager.csv_to_excel("data.csv", "Sheet2", row_order=custom_order)
+    
+    # Example 3: Copy row between sheets
+    # manager.copy_row_between_sheets("Sheet1", "Sheet2", 
+    #                                source_row=1, target_row=5)
+    
+    # Example 3b: Copy table between sheets using coordinates
+    # manager.copy_table_between_sheets(
+    #     source_sheet="Sheet1", 
+    #     target_sheet="Sheet2",
+    #     source_start_row=1, source_start_col=1,    # Source: A1
+    #     source_end_row=5, source_end_col=4,        # to D5
+    #     target_start_row=10, target_start_col=2,   # Target: B10
+    #     copy_formatting=True,
+    #     clear_target_area=True
+    # )
+    
+    # Example 3c: Copy table using Excel range notation
+    # manager.copy_table_by_range(
+    #     source_sheet="Sheet1",
+    #     target_sheet="Sheet2", 
+    #     source_range="A1:D5",      # Source range
+    #     target_start_cell="B10",   # Target starting cell
+    #     copy_formatting=True
+    # )
+    
+    # Example 4: Refresh and save
+    # manager.refresh_and_save()
+    
+    # Close manager
+    manager.close()
+    
+    print("Excel CSV Manager module loaded successfully!")
+    print("Available classes: ExcelCSVManager")
+    print("Available functions: batch_csv_to_excel")
